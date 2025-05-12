@@ -1,0 +1,3 @@
+- jetpack composeのpreviewで読み込む先のviewmodelにネストされた処理でrenderエラー
+- viewmodelをmockkでモックすることでpreviewでも対応できることを知った
+- mockitoでも対応できる
