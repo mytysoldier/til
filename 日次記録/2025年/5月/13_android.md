@@ -1,0 +1,3 @@
+- EncryptedSharedReference、SharedReferenceをラップしたもので、
+- キー、バリューを暗号化して保存できる
+- 非推奨となっているが、まだ使えそう
