@@ -1,0 +1,2 @@
+- Apple の Dev Tutorial に swift ui と uikit のチュートリアルが用意されていたのでこれの学習を進める、まずuikitから
+- ios は画面表示に必ずViewを必要とする
