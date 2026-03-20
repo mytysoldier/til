@@ -1,11 +1,12 @@
 # Swift Codable 1日分学習教材
 
-**合計目安: 60分**（理論12分 + ハンズオン28分 + その他20分）
+**合計目安: 60分**（理論15分 + ハンズオン28分 + その他17分）※Architecture 補習はオプション
 
 ## 1. 今日のゴール（目安: 2分）
 
 **struct と enum を使って JSON をデコードできるようになる。**  
-Codable の仕組みを理解し、実務でよくある落とし穴を避けられるようになる。
+Codable の仕組みを理解し、実務でよくある落とし穴を避けられるようになる。  
+（オプション）**DTO と Domain を分け、Mapper で変換する**考え方に触れる。
 
 ---
 
@@ -41,7 +42,7 @@ typealias Codable = Encodable & Decodable
 
 ---
 
-## 3. 理論（目安: 12分）
+## 3. 理論（目安: 15分）
 
 ### ポイント1: Codable はコンパイラによる自動合成
 
@@ -76,6 +77,19 @@ typealias Codable = Encodable & Decodable
 
 - **選択肢**: API の JSON がネストしている場合、Swift 側もネストした struct にするか、フラットな struct に展開するか。
 - **この教材の選択**: ネストした struct をそのまま使う。理由は、API の構造と Swift の型が1対1で対応し、変更に強いため。フラット化は `CodingKeys` やカスタム `init` で可能だが、API 変更時の修正箇所が増える。
+
+### ポイント7: Architecture 視点 — DTO / Domain 分離と Mapper
+
+- **DTO（Data Transfer Object）**: API の JSON に **1対1 で対応** させる型。`Codable` を付け、キー名・型はサーバー仕様に合わせる。UI やドメインルールは持たせない。
+- **Domain（ドメインモデル）**: アプリの **ビジネス意味** を表す型。`Codable` にしないことも多い（API が変わっても Domain の意図は保ちたいため）。
+- **Mapper**: `RunResponse（DTO）` → `Run（Domain）` のように **変換だけ** を担当する層（`init(dto:)`、`toDomain()`、`RunMapper.map(_:)` など）。DTO の変更が Mapper に閉じ込められやすい。
+- **よくある誤解**: 「全部 `Codable` の struct 1つで済ませればよい」と思いがちだが、API に **計算フィールドを無理に載せる** と、クライアントとサーバーで二重定義になりやすい。
+- **落とし穴**: DTO に **pace（ペース）** のような **クライアントで計算すべき値** を混ぜると、API が pace を返さない版に変わったときに全体が壊れやすい。**距離・時間など生データは DTO、pace は Domain 側で算出** するのが実務では扱いやすい。
+
+### 🎯 Architecture でやること（要点）
+
+- `RunResponse（DTO）` → `Run（Domain）` に **Mapper で変換**する。
+- **pace（例: 1km あたりの秒数）** などは **Domain で計算**する（DTO には持たせない、または DTO には距離・時間だけ載せる）。
 
 ---
 
@@ -288,6 +302,90 @@ final class UserDecodeTests: XCTestCase {
 
 ---
 
+### Architecture 補習（オプション・目安: 10〜15分）
+
+DTO → Domain の流れを **ラン記録** で一通りやる。`tutorial` にファイルを追加してよい。
+
+#### 🎯 やること
+
+- `RunResponse（DTO）` → `Run（Domain）` へ **Mapper** で変換する。
+- **pace（1km あたりの秒数）** などは **Domain で計算**する（JSON に pace がなくてもよい）。
+
+#### 1. DTO: API の形に合わせる（`RunResponse.swift`）
+
+```swift
+import Foundation
+
+/// API レスポンス用。サーバーのキー・型に合わせる（DTO）。
+struct RunResponse: Codable {
+    let id: String
+    let distanceMeters: Double
+    let durationSeconds: Double
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case distanceMeters = "distance_meters"
+        case durationSeconds = "duration_seconds"
+    }
+}
+```
+
+#### 2. Domain: 意味と計算を持つ（`Run.swift`）
+
+```swift
+import Foundation
+
+/// アプリ内のドメインモデル。Codable にしない例（API と切り離す）。
+struct Run: Equatable {
+    let id: String
+    let distanceMeters: Double
+    let durationSeconds: Double
+    /// 1km あたりの所要秒数（Domain で算出）
+    let paceSecondsPerKm: Double
+}
+```
+
+#### 3. Mapper: 変換のみ（`RunMapper.swift`）
+
+```swift
+import Foundation
+
+enum RunMapper {
+    static func toDomain(_ dto: RunResponse) -> Run {
+        let km = dto.distanceMeters / 1000.0
+        let pace: Double
+        if km > 0 {
+            pace = dto.durationSeconds / km
+        } else {
+            pace = 0
+        }
+        return Run(
+            id: dto.id,
+            distanceMeters: dto.distanceMeters,
+            durationSeconds: dto.durationSeconds,
+            paceSecondsPerKm: pace
+        )
+    }
+}
+```
+
+#### 4. `main.swift` で確認
+
+```swift
+let runJSON = """
+{"id": "run-1", "distance_meters": 5000, "duration_seconds": 1500}
+""".data(using: .utf8)!
+
+let dto = try JSONDecoder().decode(RunResponse.self, from: runJSON)
+let run = RunMapper.toDomain(dto)
+// 5km を 1500秒 → pace = 1500/5 = 300 秒/km
+print(run.paceSecondsPerKm)  // 300.0
+```
+
+**確認方法:** `paceSecondsPerKm` が `300.0` になること。
+
+---
+
 ## 5. 追加課題（時間が余ったら・目安: 各2〜3分）
 
 ### Easy: Optional の挙動確認
@@ -346,7 +444,7 @@ enum UserRole: String, Codable {
 
 ## 6. 実務での使いどころ（目安: 5分）
 
-1. **REST API のレスポンス**: 例として `GET /api/users/1` のレスポンスを `User` でデコードする。`URLSession.data(for: url)` は非同期のため、`async/await` や Combine と組み合わせる。実務ではネットワークエラーとデコードエラーを分けてハンドリングする。
+1. **REST API のレスポンス**: 例として `GET /api/users/1` のレスポンスを `User` でデコードする。`URLSession.data(for: url)` は非同期のため、`async/await` や Combine と組み合わせる。実務ではネットワークエラーとデコードエラーを分けてハンドリングする。規模が大きいと **`*Response` を DTO とし、画面用の Domain に Mapper で渡す** 構成にすることが多い。
 2. **設定・キャッシュの永続化**: `UserDefaults` に `JSONEncoder().encode(settings)` で保存し、起動時に `JSONDecoder().decode(Settings.self, from: data)` で読み込む。キーは `"app.settings"` など一意にしておく。
 3. **イベント送信**: 分析用イベントを `Encodable` でモデル化し、`JSONEncoder().encode(event)` で JSON 化してバックエンドに POST する。スキーマ変更時はバックエンドと型を合わせておく。
 
@@ -357,6 +455,7 @@ enum UserRole: String, Codable {
 - **Codable** は `Encodable` と `Decodable` の型エイリアスで、struct/enum のプロパティが Codable なら自動合成される。
 - **CodingKeys** で JSON のキーとプロパティをマッピングし、**dateDecodingStrategy** で日付フォーマットを指定する。
 - 実務では **デコードエラーのハンドリング** と **想定外の値へのフォールバック** を設計しておくことが重要。
+- **DTO は API 形、Domain はアプリの意味** に分け、**Mapper** で `RunResponse` → `Run` のように変換する。**pace などの派生値は Domain で計算** すると変更に強い。
 
 ---
 
