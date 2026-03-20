@@ -274,14 +274,18 @@ let json = """
 
 ### テスト（最低1つ）
 
-Command Line Tool プロジェクトに **Test ターゲットを追加** する（File → New → Target → macOS Unit Testing Bundle）。以下を `CodableTutorialTests` 内に追加する。
+Command Line Tool プロジェクトに **Test ターゲットを追加** する（File → New → Target → **macOS Unit Testing Bundle**）。**Xcode 16 以降**では [Swift Testing](https://developer.apple.com/documentation/testing) をそのまま使える。
+
+1. テストターゲットに **メインターゲット（例: `CodableTutorial`）を依存**させる（ターゲットの *General* → *Frameworks, Libraries, and Embedded Content*、または *Build Phases* → *Dependencies* で追加）。
+2. 新規 Swift ファイルをテストターゲットにだけ所属させ、以下を書く。
 
 ```swift
-import XCTest
+import Testing
 @testable import CodableTutorial
 
-final class UserDecodeTests: XCTestCase {
-    func testUserDecode() throws {
+@Suite("User の JSON デコード")
+struct UserDecodeTests {
+    @Test func decodesUser() throws {
         let json = """
         {"id": 1, "name": "山田太郎", "email": "yamada@example.com", "role": "admin", "created_at": "2024-03-17T10:00:00Z"}
         """.data(using: .utf8)!
@@ -291,14 +295,20 @@ final class UserDecodeTests: XCTestCase {
 
         let user = try decoder.decode(User.self, from: json)
 
-        XCTAssertEqual(user.id, 1)
-        XCTAssertEqual(user.name, "山田太郎")
-        XCTAssertEqual(user.role, .admin)
+        #expect(user.id == 1)
+        #expect(user.name == "山田太郎")
+        #expect(user.role == .admin)
     }
 }
 ```
 
-**確認方法:** Cmd+U でテストを実行し、`testUserDecode` が成功すること。
+- **`@Suite`** … テストのグループ名（省略可。省略時は型名などが使われる）。
+- **`@Test`** … XCTest の `func test...()` に相当。非同期なら `async` を付けられる。
+- **`#expect(...)`** … `XCTAssert...` に相当。失敗時に式が表示されやすい。
+
+**確認方法:** Cmd+U でテストを実行し、`decodesUser`（Swift Testing のテスト一覧に表示）が成功すること。
+
+**補足:** `import Testing` が解決しない場合は Xcode を 16 以上に上げるか、テストターゲットの *Frameworks* に **Swift Testing** を追加する。
 
 ---
 
@@ -436,7 +446,106 @@ enum UserRole: String, Codable {
 <details>
 <summary>回答</summary>
 
-`JSONDecoder` の `dateDecodingStrategy` を `.custom` にし、複数の `DateFormatter` を順に試すクロージャを渡す。または `User` の `init(from decoder:)` 内で `created_at` を `String` として取り、複数フォーマットでパースする。
+**方針は2通りある。**
+
+1. **`JSONDecoder.dateDecodingStrategy = .custom`** … デコードされる **すべての `Date`** に同じルールが効く。JSON の日付が **文字列** で来る前提で、複数フォーマットを順に試す。
+2. **`User` の `init(from decoder:)`** … `created_at` だけ **文字列として読み**、プロパティ `createdAt` に代入する直前にパースする。他プロパティは合成のままにしづらいので、**手書きの `init(from:)` が長くなる**点に注意。
+
+---
+
+**例 A: `dateDecodingStrategy` を `.custom` にする**
+
+```swift
+import Foundation
+
+func makeDecoderParsingMultipleDateFormats() -> JSONDecoder {
+    let decoder = JSONDecoder()
+    let iso = ISO8601DateFormatter()
+    iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+    let slash = DateFormatter()
+    slash.locale = Locale(identifier: "en_US_POSIX")
+    slash.timeZone = TimeZone(secondsFromGMT: 0)
+    slash.dateFormat = "yyyy/MM/dd"
+
+    decoder.dateDecodingStrategy = .custom { dec in
+        let c = try dec.singleValueContainer()
+        let s = try c.decode(String.self)
+
+        if let d = iso.date(from: s) { return d }
+        if let d = slash.date(from: s) { return d }
+
+        let ctx = DecodingError.Context(
+            codingPath: dec.codingPath,
+            debugDescription: "日付を解釈できません: \(s)"
+        )
+        throw DecodingError.dataCorrupted(ctx)
+    }
+    return decoder
+}
+
+// 使用例: let user = try makeDecoderParsingMultipleDateFormats().decode(User.self, from: data)
+```
+
+---
+
+**例 B: `created_at` だけ `String` で取ってからパースする**
+
+（`User` に `createdAt: Date` があり、`CodingKeys` で `created_at` にマッピングしている場合。`init(from:)` を自前実装するので **`encode(to:)` も必要**になる。）
+
+```swift
+import Foundation
+
+struct User: Codable {
+    let id: Int
+    let name: String
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case id, name
+        case createdAt = "created_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+
+        let raw = try c.decode(String.self, forKey: .createdAt)
+        createdAt = try Self.decodeFlexibleDate(from: raw)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try c.encode(iso.string(from: createdAt), forKey: .createdAt)
+    }
+
+    private static func decodeFlexibleDate(from string: String) throws -> Date {
+        let iso = ISO8601DateFormatter()
+        iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = iso.date(from: string) { return d }
+
+        let slash = DateFormatter()
+        slash.locale = Locale(identifier: "en_US_POSIX")
+        slash.timeZone = TimeZone(secondsFromGMT: 0)
+        slash.dateFormat = "yyyy/MM/dd"
+        if let d = slash.date(from: string) { return d }
+
+        throw DecodingError.dataCorrupted(
+            DecodingError.Context(
+                codingPath: [],
+                debugDescription: "日付を解釈できません: \(string)"
+            )
+        )
+    }
+}
+```
+
+**メモ:** 例 B の `encode` は **常に ISO8601 文字列で書き出す**例。API が `yyyy/MM/dd` を期待するなら、エンコード側も合わせて変える。
 
 </details>
 
