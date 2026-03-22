@@ -213,10 +213,6 @@ function todoReducer(state: TodoState, action: TodoAction): TodoState {
       };
     case 'DELETE':
       return { items: state.items.filter((i) => i.id !== action.id) };
-    default: {
-      const _exhaustive: never = action;
-      return state;
-    }
   }
 }
 
@@ -373,8 +369,9 @@ export default function App() {
 - **フック**: `renderHook(() => useCounter())` で increment 後の `count` を検証（Testing Library v14+）。
 
 ```tsx
-// 例: CounterView
-import { render, screen, fireEvent } from '@testing-library/react';
+// 例: CounterView（Vitest では `test` / `expect` を `vitest` から import）
+import { expect, test } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import { CounterView } from './CounterView';
 
 test('shows doubled', () => {
@@ -387,7 +384,7 @@ test('shows doubled', () => {
     />,
   );
   expect(screen.getByTestId('count')).toHaveTextContent('3');
-  expect(screen.getByText(/× 2 = 6/)).toBeInTheDocument();
+  expect(screen.getByText(/\* 2 = 6/)).toBeInTheDocument();
 });
 ```
 
@@ -418,13 +415,247 @@ src/
 
 `useCounter` に `reset` を追加し、`CounterView` にボタンを足す。derived の `doubled` はそのまま追随する。
 
+<details>
+<summary>回答例</summary>
+
+**`hooks/useCounter.ts`（抜粋）**
+
+```ts
+const reset = useCallback(() => setCount(initial), [initial]);
+// ...
+return { count, doubled, increment, decrement, reset };
+```
+
+**`components/CounterView.tsx`（抜粋）**
+
+```tsx
+export type CounterViewProps = {
+  count: number;
+  doubled: number;
+  onIncrement: () => void;
+  onDecrement: () => void;
+  onReset: () => void;
+};
+
+// JSX 内
+<button type="button" onClick={onReset}>
+  リセット
+</button>
+```
+
+`CounterContainer` では `onReset={reset}` を渡す。`doubled` は `count * 2` のままなので、`reset` 後も常に `count` の 2 倍になる。
+
+</details>
+
 ### Medium: フィルタは derived
 
 `useTodoList` に `filter: 'all' | 'active' | 'done'` を `useState` で持ち、**表示用の配列**は `items` から `useMemo` で計算（または単純なら毎レンダー計算）。`filteredItems` を別 state にしない。
 
+<details>
+<summary>回答例</summary>
+
+**`hooks/useTodoList.ts`（抜粋）**
+
+```ts
+import { useCallback, useMemo, useReducer, useState } from 'react';
+
+export type TodoFilter = 'all' | 'active' | 'done';
+
+// reducer は変更なし（真実のデータは常に state.items）
+
+export function useTodoList() {
+  const [state, dispatch] = useReducer(todoReducer, { items: [] });
+  const [draft, setDraft] = useState('');
+  const [filter, setFilter] = useState<TodoFilter>('all');
+
+  const visibleItems = useMemo(() => {
+    switch (filter) {
+      case 'active':
+        return state.items.filter((i) => !i.done);
+      case 'done':
+        return state.items.filter((i) => i.done);
+      default:
+        return state.items;
+    }
+  }, [state.items, filter]);
+
+  const add = useCallback(() => {
+    const text = draft.trim();
+    if (!text) return;
+    dispatch({ type: 'ADD', text });
+    setDraft('');
+  }, [draft]);
+
+  const toggle = useCallback((id: number) => {
+    dispatch({ type: 'TOGGLE', id });
+  }, []);
+
+  const remove = useCallback((id: number) => {
+    dispatch({ type: 'DELETE', id });
+  }, []);
+
+  return {
+    items: visibleItems,
+    filter,
+    setFilter,
+    draft,
+    setDraft,
+    add,
+    toggle,
+    remove,
+  };
+}
+```
+
+一覧の `items` は **フィルタ後の配列**（derived）。`filter` だけが `useState` で、表示用のコピーを別 state にしていない点に注意。
+
+**`components/TodoListContainer.tsx`**
+
+```tsx
+import { useTodoList } from '../hooks/useTodoList';
+import { TodoListView } from './TodoListView';
+
+export function TodoListContainer() {
+  const {
+    items,
+    draft,
+    setDraft,
+    add,
+    toggle,
+    remove,
+    filter,
+    setFilter,
+  } = useTodoList();
+
+  return (
+    <TodoListView
+      draft={draft}
+      onDraftChange={setDraft}
+      onAdd={add}
+      items={items}
+      onToggle={toggle}
+      onDelete={remove}
+      filter={filter}
+      onFilterChange={setFilter}
+    />
+  );
+}
+```
+
+**`components/TodoListView.tsx`**
+
+```tsx
+import type { TodoFilter, TodoItem } from '../hooks/useTodoList';
+
+export type TodoListViewProps = {
+  draft: string;
+  onDraftChange: (value: string) => void;
+  onAdd: () => void;
+  items: TodoItem[];
+  onToggle: (id: number) => void;
+  onDelete: (id: number) => void;
+  filter: TodoFilter;
+  onFilterChange: (value: TodoFilter) => void;
+};
+
+export function TodoListView({
+  draft,
+  onDraftChange,
+  onAdd,
+  items,
+  onToggle,
+  onDelete,
+  filter,
+  onFilterChange,
+}: TodoListViewProps) {
+  return (
+    <div>
+      <fieldset>
+        <legend>表示</legend>
+        {(['all', 'active', 'done'] as const).map((key) => (
+          <label key={key}>
+            <input
+              type="radio"
+              name="todo-filter"
+              checked={filter === key}
+              onChange={() => onFilterChange(key)}
+            />
+            {key === 'all' ? 'すべて' : key === 'active' ? '未完了' : '完了'}
+          </label>
+        ))}
+      </fieldset>
+      <input
+        value={draft}
+        onChange={(e) => onDraftChange(e.target.value)}
+        aria-label="新しいTodo"
+      />
+      <button type="button" onClick={onAdd}>
+        追加
+      </button>
+      <ul>
+        {items.map((item) => (
+          <li key={item.id}>
+            <input
+              type="checkbox"
+              checked={item.done}
+              onChange={() => onToggle(item.id)}
+            />
+            <span
+              style={{
+                textDecoration: item.done ? 'line-through' : 'none',
+              }}
+            >
+              {item.text}
+            </span>
+            <button type="button" onClick={() => onDelete(item.id)}>
+              削除
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+```
+
+ラジオの代わりに `<select value={filter} onChange={...}>` やボタン3つでもよい。
+
+**別案**: `visibleItems` を `useMemo` ではなく、関数本体で `const visibleItems = state.items.filter(...)` と毎レンダー計算だけ書いても、件数が少なければ十分速い。
+
+</details>
+
 ### Hard: dispatch を View に出さない
 
 すでに `toggle` / `remove` のようにラップしている。さらに `ADD` を `addFromDraft` 一つにまとめ、View からは「追加」しか見えないようにする（API の厚みの設計練習）。
+
+<details>
+<summary>回答例</summary>
+
+**ポイント**: `dispatch` はフック内に閉じ、`ADD` と下書きクリアを **1 つの関数**にまとめる。View の props は `onAdd` のままでよいが、Container が渡す実体を `addFromDraft` にする。
+
+**`hooks/useTodoList.ts`（抜粋）**
+
+```ts
+const addFromDraft = useCallback(() => {
+  const text = draft.trim();
+  if (!text) return;
+  dispatch({ type: 'ADD', text });
+  setDraft('');
+}, [draft]);
+
+return {
+  items: state.items,
+  draft,
+  setDraft,
+  add: addFromDraft,
+  toggle,
+  remove,
+};
+```
+
+名前を `add` のままにしてもよいが、フックの戻り値を `addFromDraft` と命名すると「下書きから追加する」意図が伝わりやすい。View は `dispatch` や `{ type: 'ADD' }` を知らず、`onAdd` を呼ぶだけでよい。
+
+</details>
 
 ---
 
