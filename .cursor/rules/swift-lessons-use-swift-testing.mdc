@@ -1,0 +1,12 @@
+---
+description: TIL の Swift 学習教材ではユニットテストに Swift Testing を使う（XCTest にしない）
+globs:
+  - "**/日次記録/**/*.md"
+alwaysApply: false
+---
+
+# Swift 教材・ハンズオンのテスト
+
+- **ユニットテストのサンプル・手順では `import Testing`、マクロ `@Test`（必要なら `@Suite`）、検証は `#expect` を使う。** `XCTest`、`XCTestCase`、`XCTAssert*` は教材に書かない。
+- 読者向けに **Xcode 16 以降**（または当該プラットフォームで Swift Testing が利用できる前提）を必要なら明記する。
+- 公式: [Swift Testing](https://developer.apple.com/documentation/testing)
