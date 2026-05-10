@@ -1,0 +1,18 @@
+---
+description: TIL・React 教材は TypeScript のみ（本文・コードフェンス・拡張子）
+globs:
+  - "**/日次記録/**/*.md"
+alwaysApply: false
+---
+
+# React 教材・ハンズオンは TypeScript ベース
+
+- **新規の React ハンズオン・手順付き教材**では、実装は **TypeScript のみ**とする。**JavaScript 専用テンプレート（`react`）は使わない。** Vite は **`react-ts`** を前提に書く。
+- **教材 Markdown 内**：読者がコピーする**実装コード**は次に統一する。
+  - ファイルは **`*.ts` / `*.tsx`** のみ（**`*.js` / `*.jsx` の例を書かない**）。
+  - コードフェンスの言語タグは **`ts` / `tsx` のみ**（**`js` / `javascript` / 無言語で JSX だけ**にしない）。
+  - **import は拡張子なし**（例：`from "./itemsApi"`）を基本とする（`moduleResolution: bundler` に合わせる）。
+- **次は「言語が JS に戻っていない」別カテゴリ**として明示してよい：`*.json` 静的データ、`package.json`、製品名 **Node.js**、パッケージ名 **`tsx`**（TypeScript 実行用 CLI）。
+- **`src/` 以下に `.js` / `.jsx` を置かない**方針を教材本文に一言入れる。Vite テンプレートがルートに `eslint.config.js` を出す場合は、**`eslint.config.mjs` にリネームしてよい**旨を任意ステップでよいので書いてよい（中身は ESM のまま）。
+- **型**：`strict` を前提とする。安易な **`any`** は避け、API 境界では **`unknown` を受けてから狭める**／**型＋実行時の最低限の検証**をセットで示すのが望ましい。
+- **例外**：意図的に「型なしの落とし穴」を題材にする場合のみ、該当セクションに**理由とスコープ**を明記して JavaScript 例を出してよい。
