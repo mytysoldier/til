@@ -28,7 +28,7 @@
 
 **目安時間（分）: 1**
 
-公式サンプルと同様の `fetch` で JSON を取得し、`useState` で状態を分けて管理しながら **「ローディング → 一覧表示 → エラー表示」** までを **Expo Go 上で**一通り動かす。API 境界は **`unknown` を受けてから狭める**ユーティリティに寄せ、**テンプレ付属の Jest（jest-expo）でその変換を最低 1 本テスト**する（※本作業は `tutorial` フォルダ内でプロジェクトを作って進める）。アプリ側の UI コンポーネントは **`src/` 以下を `*.tsx` で揃える**（型とユーティリティは `*.ts` でよい）。
+公式サンプルと同様の `fetch` で JSON を取得し、`useState` で状態を分けて管理しながら **「ローディング → 一覧表示 → エラー表示」** までを **Expo Go 上で**一通り動かす。**`https://reactnative.dev/movies.json` に届かない環境向けに、同スキーマの `assets/movies.json` を同梱し、リモート失敗時に読み替える**（理論の項 7）。API 境界は **`unknown` を受けてから狭める**ユーティリティに寄せ、**テンプレ付属の Jest（jest-expo）でその変換を最低 1 本テスト**する（※本作業は `tutorial` フォルダ内でプロジェクトを作って進める）。アプリ側の UI コンポーネントは **`src/` 以下を `*.tsx` で揃える**（型とユーティリティは `*.ts` でよい）。
 
 ---
 
@@ -76,6 +76,9 @@
 6. **API の境界では `any` で飲むより `unknown` + 実行時の最低限検証**  
    型は「期待」を表すが、ネットワークの値は保証されない。**狭い関数（今回の `extractMovies`）に閉じ込める**と、画面コンポーネントが読みやすい。  
    **よくある落とし穴:** `as Movie[]` だけして一覧が真っ白／クラッシュ。最低限、配列かどうかとフィールド型を見る。
+
+7. **教材で使う公式デモ URL は、環境によって一度も届かないことがある**  
+   例として、**企業 LAN のプロキシ／ファイアウォール**、**DNS・VPN・キャプティブポータル**、**一時的な障害やレート制限**、**回線・地域による不安定さ**などがある。`fetch` が失敗しても学習を止めないため、本教材では **`https://reactnative.dev/movies.json` と同じスキーマの JSON を `assets/` に同梱し、失敗時に読み替える**運用を **標準手順**に含める（本番の「オフラインキャッシュ」とは別だが、**学習環境の再現性**には効く）。
 
 ### 設計の選択肢（今日の採用と理由）
 
@@ -195,25 +198,66 @@ export function extractMovies(json: unknown): Movie[] {
 
 ---
 
-### ステップ 4: `moviesApi.ts`
+### ステップ 4: `assets/movies.json` と `moviesApi.ts`（リモート優先・到達不能時は同梱 JSON）
+
+教材の取得元は **`https://reactnative.dev/movies.json`**（React Native のネットワーク解説で使われる公式デモと同じデータ形）である。**ただしこの URL へ到達できない環境は実際にある**（理論の項 7）。到達できるかに依存せずハンズオンを完走できるよう、**同じスキーマの JSON をアプリにバンドルし、`fetch` が失敗したらそちらを使う**。
+
+#### 4-1. `assets/movies.json` を置く
+
+1. プロジェクトルートに **`assets/`** がなければ作成する（Expo の空テンプレートには通常ある）。  
+2. その中に **`movies.json`** を置く。中身は **`{ "movies": [ { "id", "title", "releaseYear" } ... ] }` の形**であればよい。  
+   - 手元のブラウザで `https://reactnative.dev/movies.json` が開けるなら、その内容を保存して使ってよい。  
+   - 開けない場合は、チューター配布や手元のコピーを使い、**`extractMovies` が期待するフィールドだけ**一致させる。
+
+公式デモと同形の一例（必要ならこのまま保存してよい）:
+
+```json
+{
+  "title": "The Basics - Networking",
+  "description": "Your app fetched this from a remote endpoint!",
+  "movies": [
+    {"id": "1", "title": "Star Wars", "releaseYear": "1977"},
+    {"id": "2", "title": "Back to the Future", "releaseYear": "1985"},
+    {"id": "3", "title": "The Matrix", "releaseYear": "1999"}
+  ]
+}
+```
+
+#### 4-2. `moviesApi.ts`（リモート → 失敗時は `assets`）
+
+`src/api/moviesApi.ts` に次を書く。`import ... movies.json` が型エラーになる場合は **`tsconfig.json` の `compilerOptions` に `resolveJsonModule: true`** を足す（多くの Expo TypeScript テンプレートでは **既に有効**）。
 
 ```ts
 // ファイル: src/api/moviesApi.ts
 import {extractMovies} from '../utils/extractMovies';
+import localMovies from '../../assets/movies.json';
 
 const MOVIES_URL = 'https://reactnative.dev/movies.json';
 
+/**
+ * 公式デモと同じ URL を優先する。
+ * 端末・回線・プロキシ等で reactnative.dev に届かない場合は、同梱の assets/movies.json を使う。
+ */
 export async function fetchMovieList() {
-  const response = await fetch(MOVIES_URL);
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+  try {
+    const response = await fetch(MOVIES_URL);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const json: unknown = await response.json();
+    return extractMovies(json);
+  } catch {
+    if (__DEV__) {
+      console.warn(
+        '[fetchMovieList] remote failed, using assets/movies.json (same schema as official demo)',
+      );
+    }
+    return extractMovies(localMovies as unknown);
   }
-  const json: unknown = await response.json();
-  return extractMovies(json);
 }
 ```
 
-**確認方法:** `fetchMovieList` を import できる状態であること（ステップ 5 で使う）。
+**確認方法:** `fetchMovieList` を import できること。可能なら **機内モードやプロキシあり環境でも**一覧が **`assets/movies.json` 由来で表示される**ことを一度見る（開発時は上記 `console.warn` が出る）。
 
 ---
 
@@ -318,7 +362,7 @@ const styles = StyleSheet.create({
 });
 ```
 
-**確認方法:** Expo Go で **スピナー → タイトル一覧**が出る。機内モード等で **エラー文**が出れば HTTP / ネットワーク系の扱いが通っている。
+**確認方法:** Expo Go で **スピナー → タイトル一覧**が出る。**ステップ 4 のフォールバック込み**のため、機内モードでも **一覧は `assets/movies.json` で表示される**（エラー画面にはならない）。**エラー表示の動作確認**をしたいときは、一時的に `fetchMovieList` のフォールバックを外す、`assets/movies.json` を意図的に壊して `extractMovies` が throw する状態にする、など読者側で場面を変える。
 
 ---
 
@@ -501,7 +545,8 @@ useEffect(() => {
 
 - **Expo Go** でも **`fetch` + 薄い API 関数 + `useState` + `useEffect`** の型はそのまま使える。  
 - **`response.ok` と `response.json()` の失敗**は別物として扱い、ユーザー向け文面は state に載せる。  
-- **`unknown` を手元のモデルに狭める関数 + Jest 1 本**が、変な JSON への耐力を上げる最小セット。
+- **`unknown` を手元のモデルに狭める関数 + Jest 1 本**が、変な JSON への耐力を上げる最小セット。  
+- **学習用 URL は届かないことがある**ため、**同スキーマのバンドル JSON にフォールバック**して環境差を吸収する。
 
 ---
 
@@ -518,4 +563,5 @@ useEffect(() => {
 
 - React state の考え方: [State の記憶](https://react.dev/learn/state-a-components-memory)  
 - RN Networking: https://reactnative.dev/docs/network  
+- 公式デモ JSON（ブラウザで取得できれば `assets/movies.json` の元になる）: https://reactnative.dev/movies.json  
 - Expo ドキュメント: https://docs.expo.dev/  
